@@ -42,7 +42,7 @@ UmaBridge 在 Android 手机上把上游 Clash 订阅的入口与 Nasu 出口组
 
 ### 应用更新
 
-打开页面即可查看当前版本的日志（如有）。发现新版时，待更新版本排在当前版本上方，默认展开新版日志、收起当前版本日志。点各自的日志标题可单独展开或收起。
+当前版本卡片位于页面顶部，发现新版后，两张卡片并排显示，左侧是当前版本，右侧是待更新版本。下方的日志可以分别展开或收起。有新版时，新版日志在前并默认展开；只有当前版本时，默认展开当前版本日志（如有）。
 
 在「设置 → 检查更新」查看当前显示版本与内部版本。检查公开正式版时先比较显示版本，再比较内部版本号（如 `26112301` 代表 2026 年 11 月 23 日第 01 包）。发现新版后显示待更新版本和该次发布的更新日志。点「下载更新」交给 Android 系统下载管理器，可在完成前取消。校验 APK 后，点「安装更新」并在系统窗口确认。「打开发布页面」可浏览全部版本。此功能按需检查。
 
@@ -81,7 +81,7 @@ To configure push, open **Settings → Push updates**, then copy the controller 
 
 ### App updates
 
-Open **Settings → Check for updates** to see the installed build’s notes, if available. When an update is available, it appears above the installed version with its notes expanded and the installed notes collapsed by default. Tap either notes heading to expand or collapse it independently. UmaBridge compares numeric display versions, then compares the build number for revisions of the same version. For example, build `26112301` is the first build on 23 November 2026. When an update is available, the page shows both versions and the release notes. **Download update** starts Android Download Manager. You can cancel the download. After verifying the file and its signing certificate, tap **Install update** and confirm with Android. **Open releases page** lets you choose a version manually.
+Open **Settings → Check for updates** to see the installed build’s notes, if available. The installed version is at the top. When an update is available, its card appears alongside the installed version, on the right. Below the cards, the available version’s notes come first and are expanded by default. Tap either notes heading to expand or collapse it independently. UmaBridge compares numeric display versions, then compares the build number for revisions of the same version. For example, build `26112301` is the first build on 23 November 2026. When an update is available, the page shows both versions and the release notes. **Download update** starts Android Download Manager. You can cancel the download. After verifying the file and its signing certificate, tap **Install update** and confirm with Android. **Open releases page** lets you choose a version manually.
 
 ### Licenses
 
