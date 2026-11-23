@@ -27,3 +27,5 @@ jobs:
         env:
           RELEASE_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/promote.py publish
+      - name: Check the update and download without credentials
+        run: python3 .github/scripts/promote.py public-check

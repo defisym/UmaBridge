@@ -54,7 +54,8 @@ def retrieve():
     name = artifact["name"]
     version, code = re.fullmatch(APK, name).groups()
     tag = f"v{version}-{code}"
-    if os.environ["GITHUB_EVENT_NAME"] == "push" and Path(".github/release-request").read_text().strip() != tag:
+    request = Path(".github/release-request").read_text().split() if os.environ["GITHUB_EVENT_NAME"] == "push" else []
+    if request and request[0] != tag:
         raise ValueError("Latest signed build does not match the requested tag")
     read_archive(artifact, token, name)
     apk = TMP / name
@@ -67,6 +68,8 @@ def retrieve():
             or "native-code: 'arm64-v8a'" not in badging.splitlines() or "application-debuggable" in badging):
         raise ValueError("APK manifest does not match artifact")
     digest = hashlib.file_digest(apk.open("rb"), "sha256").hexdigest()
+    if len(request) > 1 and request[1:] != [digest]:
+        raise ValueError("Signed build differs from the APK approved for publication")
     if code == "26112302" and digest != FIRST:
         raise ValueError("Initial APK digest mismatch")
     if code != "26112302":
@@ -117,6 +120,19 @@ def publish():
                               if previous < int(key) <= int(code))
         if not body.strip():
             raise ValueError("Release notes are empty")
+        if int(code) >= 26112304:
+            public_asset = {key: asset[key] for key in ("name", "size", "digest", "browser_download_url")}
+            manifest = dict(tag_name=tag, draft=False, prerelease=False, body=body, assets=[public_asset])
+            payload = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
+            expected = "sha256:" + hashlib.sha256(payload).hexdigest()
+            companion = next((a for a in current["assets"] if a["name"] == "update.json"), None)
+            if not companion:
+                path = TMP / "update.json"
+                path.write_bytes(payload)
+                companion = json.loads(api(f"{UPLOAD}/releases/{current['id']}/assets?name=update.json", token,
+                                    "-H", "Content-Type: application/json", "--data-binary", "@" + str(path)))
+            if companion["digest"] != expected:
+                raise ValueError("Update manifest digest mismatch")
         write(f"/releases/{current['id']}", "PATCH", dict(draft=False, prerelease=False, make_latest="true", body=body))
     latest = json.loads(api(PUBLIC + "/releases/latest", token))
     if latest["tag_name"] != tag or not any(a["name"] == apk.name and a["digest"] == digest for a in latest["assets"]):
@@ -124,5 +140,36 @@ def publish():
     print(latest["html_url"])
 
 
+def public_check():
+    # These are exactly the unauthenticated API headers used by build 26112302.
+    def anonymous(url, *args):
+        return subprocess.check_output(["curl", "--silent", "--show-error", "--fail", "--location",
+            "--proto", "=https", "--retry", "3", "--retry-all-errors", "--max-time", "75",
+            "-A", "UmaBridge-Android", "-H", "Accept: application/vnd.github+json", *args, url])
+    apk, = TMP.glob("*.apk")
+    version, code = re.fullmatch(APK, apk.name).groups()
+    tag = f"v{version}-{code}"
+    public = json.loads(anonymous(PUBLIC + "/releases/latest"))
+    if public["tag_name"] != tag or public["draft"] or public["prerelease"]:
+        raise ValueError("Unexpected release in the anonymous API")
+    asset, = [a for a in public["assets"] if a["name"] == apk.name]
+    url = "https://github.com/defisym/UmaBridge/releases"
+    if asset["browser_download_url"] != f"{url}/download/{tag}/{apk.name}":
+        raise ValueError("Incompatible APK URL")
+    copy = TMP / "public-download.bin"
+    anonymous(asset["browser_download_url"], "-o", str(copy))
+    with apk.open("rb") as original, copy.open("rb") as downloaded:
+        digest = "sha256:" + hashlib.file_digest(original, "sha256").hexdigest()
+        if (asset["digest"] != digest or asset["size"] != copy.stat().st_size
+                or "sha256:" + hashlib.file_digest(downloaded, "sha256").hexdigest() != digest):
+            raise ValueError("Public download mismatch")
+    if int(code) >= 26112304:
+        fallback = json.loads(anonymous(url + "/latest/download/update.json"))
+        if (fallback["tag_name"] != tag or fallback["body"] != public["body"] or
+                fallback["assets"] != [{key: asset[key] for key in ("name", "size", "digest", "browser_download_url")}]):
+            raise ValueError("Fallback metadata mismatch")
+    print(f"Anonymous update check and APK download passed for {tag}")
+
+
 if __name__ == "__main__":
-    {"retrieve": retrieve, "publish": publish}[sys.argv[1]]()
+    {"retrieve": retrieve, "publish": publish, "public-check": public_check}[sys.argv[1]]()
