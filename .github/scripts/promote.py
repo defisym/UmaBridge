@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -128,41 +130,12 @@ def publish():
         path = TMP / "update.json"
         path.write_text(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         expected = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-        assets = {a["name"]: a for a in current["assets"]}
-        def ensure_manifest(name):
-            found = assets.get(name)
-            if not found:
-                found = json.loads(api(f"{UPLOAD}/releases/{current['id']}/assets?name={name}", token,
-                    "-H", "Content-Type: application/json", "--data-binary", "@" + str(path)))
-            if found["digest"] != expected or found["state"] != "uploaded":
-                raise ValueError("Update manifest digest mismatch")
-            return found
-
-        # Reconcile the first manifest emitted with GitHub's temporary draft URL.
-        # Stage the corrected bytes first and keep the original available during the swap.
-        old_digest = "sha256:27a7f5f80f1b7086bbbe7b2afea6644cc0cb05f21ba247811be20958edea3b27"
-        companion = assets.get("update.json")
-        backup = assets.get("update-draft-url.json")
-        if code == "26112304" and (backup or (companion and companion["digest"] == old_digest)):
-            old = backup or companion
-            if old["id"] != 781702044 or old["digest"] != old_digest:
-                raise ValueError("Unexpected previous manifest")
-            if not companion or companion["digest"] != expected:
-                staged = ensure_manifest("update-verified.json")
-                if not backup:
-                    write(f"/releases/assets/{old['id']}", "PATCH", {"name": "update-draft-url.json"})
-                try:
-                    promoted = write(f"/releases/assets/{staged['id']}", "PATCH", {"name": "update.json"})
-                    if promoted["digest"] != expected:
-                        raise ValueError("Manifest promotion failed")
-                except Exception:
-                    names = json.loads(api(f"{PUBLIC}/releases/{current['id']}/assets", token))
-                    if not any(a["name"] == "update.json" for a in names):
-                        write(f"/releases/assets/{old['id']}", "PATCH", {"name": "update.json"})
-                    raise
-            api(f"{PUBLIC}/releases/assets/{old['id']}", token, "-X", "DELETE")
-        else:
-            ensure_manifest("update.json")
+        companion = next((a for a in current["assets"] if a["name"] == "update.json"), None)
+        if companion is None:
+            companion = json.loads(api(f"{UPLOAD}/releases/{current['id']}/assets?name=update.json", token,
+                "-H", "Content-Type: application/json", "--data-binary", "@" + str(path)))
+        if companion["digest"] != expected or companion["state"] != "uploaded":
+            raise ValueError("Update manifest digest mismatch")
     if current["draft"]:
         write(f"/releases/{current['id']}", "PATCH", dict(draft=False, prerelease=False, make_latest="true", body=body))
     latest = json.loads(api(PUBLIC + "/releases/latest", token))
@@ -172,37 +145,50 @@ def publish():
 
 
 def public_check():
-    # These are exactly the unauthenticated API headers used by build 26112302.
-    def anonymous(url, *args):
+    def download(url, *args):
         return subprocess.check_output(["curl", "--silent", "--show-error", "--fail", "--location",
             "--proto", "=https", "--retry", "3", "--retry-all-errors", "--max-time", "75",
-            "-A", "UmaBridge-Android", "-H", "Accept: application/vnd.github+json", *args, url])
+            "-A", "UmaBridge-Android", "-H", "Accept: application/octet-stream", *args, url])
+
     apk, = TMP.glob("*.apk")
     version, code = re.fullmatch(APK, apk.name).groups()
     tag = f"v{version}-{code}"
-    public = json.loads(anonymous(PUBLIC + "/releases/latest"))
-    if public["tag_name"] != tag or public["draft"] or public["prerelease"]:
-        raise ValueError("Unexpected release in the anonymous API")
-    asset, = [a for a in public["assets"] if a["name"] == apk.name]
-    url = "https://github.com/defisym/UmaBridge/releases"
-    if asset["browser_download_url"] != f"{url}/download/{tag}/{apk.name}":
-        raise ValueError("Incompatible APK URL")
-    copy = TMP / "public-download.bin"
-    anonymous(asset["browser_download_url"], "-o", str(copy))
-    with apk.open("rb") as original, copy.open("rb") as downloaded:
+    base = "https://github.com/defisym/UmaBridge/releases"
+    apk_url = f"{base}/download/{tag}/{apk.name}"
+    with apk.open("rb") as original:
         digest = "sha256:" + hashlib.file_digest(original, "sha256").hexdigest()
-        if (asset["digest"] != digest or asset["size"] != copy.stat().st_size
-                or "sha256:" + hashlib.file_digest(downloaded, "sha256").hexdigest() != digest):
-            raise ValueError("Public download mismatch")
     if int(code) >= 26112304:
-        expected = [{key: asset[key] for key in ("name", "size", "digest", "browser_download_url")}]
+        expected = json.loads((TMP / "update.json").read_bytes())
         for attempt in range(6):
-            fallback = json.loads(anonymous(url + "/latest/download/update.json"))
-            if fallback["tag_name"] == tag and fallback["body"] == public["body"] and fallback["assets"] == expected:
+            public = json.loads(download(base + "/latest/download/update.json"))
+            if public == expected:
                 break
             if attempt == 5:
-                raise ValueError("Fallback metadata mismatch")
+                raise ValueError("Public manifest does not match the verified release")
             time.sleep(5)
+    copy = TMP / "public-download.bin"
+    download(apk_url, "-o", str(copy))
+    with copy.open("rb") as downloaded:
+        if copy.stat().st_size != apk.stat().st_size or "sha256:" + hashlib.file_digest(downloaded, "sha256").hexdigest() != digest:
+            raise ValueError("Public APK download mismatch")
+
+    # The optional legacy client check is separate from the current, API-independent path.
+    req = urllib.request.Request(PUBLIC + "/releases/latest",
+            headers={"User-Agent": "UmaBridge-Android", "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            legacy = json.load(response)
+    except urllib.error.HTTPError as exc:
+        limited = exc.code in (403, 429) and (exc.code == 429 or exc.headers.get("X-RateLimit-Remaining") == "0"
+                  or "rate limit" in exc.read(8192).decode(errors="replace").lower())
+        if int(code) < 26112304 or not limited:
+            raise
+        print("The legacy anonymous API was rate-limited. The current public manifest and APK passed without the API.")
+    else:
+        asset, = [a for a in legacy["assets"] if a["name"] == apk.name]
+        if (legacy["tag_name"] != tag or legacy["draft"] or legacy["prerelease"] or asset["browser_download_url"] != apk_url
+                or asset["digest"] != digest or asset["size"] != apk.stat().st_size):
+            raise ValueError("Legacy API metadata mismatch")
     print(f"Anonymous update check and APK download passed for {tag}")
 
 
