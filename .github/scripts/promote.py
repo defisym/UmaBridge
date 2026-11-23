@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -110,29 +111,59 @@ def publish():
                                "--data-binary", "@" + str(apk)))
     if asset["digest"] != digest or asset["size"] != apk.stat().st_size or asset["state"] != "uploaded":
         raise ValueError("Release asset failed verification")
-    if current["draft"]:
-        body = current.get("body") or ""
-        if (TMP / "notes.json").exists():
-            notes = json.loads((TMP / "notes.json").read_text())
-            if code not in notes:
-                raise ValueError("Missing release notes for the selected build")
-            body = "\n\n".join(notes[key].strip() for key in sorted(notes, key=int, reverse=True)
-                              if previous < int(key) <= int(code))
-        if not body.strip():
-            raise ValueError("Release notes are empty")
-        if int(code) >= 26112304:
-            public_asset = {key: asset[key] for key in ("name", "size", "digest", "browser_download_url")}
-            manifest = dict(tag_name=tag, draft=False, prerelease=False, body=body, assets=[public_asset])
-            payload = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()
-            expected = "sha256:" + hashlib.sha256(payload).hexdigest()
-            companion = next((a for a in current["assets"] if a["name"] == "update.json"), None)
-            if not companion:
-                path = TMP / "update.json"
-                path.write_bytes(payload)
-                companion = json.loads(api(f"{UPLOAD}/releases/{current['id']}/assets?name=update.json", token,
-                                    "-H", "Content-Type: application/json", "--data-binary", "@" + str(path)))
-            if companion["digest"] != expected:
+    body = current.get("body") or ""
+    if current["draft"] and (TMP / "notes.json").exists():
+        notes = json.loads((TMP / "notes.json").read_text())
+        if code not in notes:
+            raise ValueError("Missing release notes for the selected build")
+        body = "\n\n".join(notes[key].strip() for key in sorted(notes, key=int, reverse=True)
+                          if previous < int(key) <= int(code))
+    if not body.strip():
+        raise ValueError("Release notes are empty")
+    if int(code) >= 26112304:
+        # GitHub can assign an untagged download URL while the release is a draft.
+        public_asset = {key: asset[key] for key in ("name", "size", "digest")}
+        public_asset["browser_download_url"] = f"https://github.com/defisym/UmaBridge/releases/download/{tag}/{apk.name}"
+        manifest = dict(tag_name=tag, draft=False, prerelease=False, body=body, assets=[public_asset])
+        path = TMP / "update.json"
+        path.write_text(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        expected = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        assets = {a["name"]: a for a in current["assets"]}
+        def ensure_manifest(name):
+            found = assets.get(name)
+            if not found:
+                found = json.loads(api(f"{UPLOAD}/releases/{current['id']}/assets?name={name}", token,
+                    "-H", "Content-Type: application/json", "--data-binary", "@" + str(path)))
+            if found["digest"] != expected or found["state"] != "uploaded":
                 raise ValueError("Update manifest digest mismatch")
+            return found
+
+        # Reconcile the first manifest emitted with GitHub's temporary draft URL.
+        # Stage the corrected bytes first and keep the original available during the swap.
+        old_digest = "sha256:27a7f5f80f1b7086bbbe7b2afea6644cc0cb05f21ba247811be20958edea3b27"
+        companion = assets.get("update.json")
+        backup = assets.get("update-draft-url.json")
+        if code == "26112304" and (backup or (companion and companion["digest"] == old_digest)):
+            old = backup or companion
+            if old["id"] != 781702044 or old["digest"] != old_digest:
+                raise ValueError("Unexpected previous manifest")
+            if not companion or companion["digest"] != expected:
+                staged = ensure_manifest("update-verified.json")
+                if not backup:
+                    write(f"/releases/assets/{old['id']}", "PATCH", {"name": "update-draft-url.json"})
+                try:
+                    promoted = write(f"/releases/assets/{staged['id']}", "PATCH", {"name": "update.json"})
+                    if promoted["digest"] != expected:
+                        raise ValueError("Manifest promotion failed")
+                except Exception:
+                    names = json.loads(api(f"{PUBLIC}/releases/{current['id']}/assets", token))
+                    if not any(a["name"] == "update.json" for a in names):
+                        write(f"/releases/assets/{old['id']}", "PATCH", {"name": "update.json"})
+                    raise
+            api(f"{PUBLIC}/releases/assets/{old['id']}", token, "-X", "DELETE")
+        else:
+            ensure_manifest("update.json")
+    if current["draft"]:
         write(f"/releases/{current['id']}", "PATCH", dict(draft=False, prerelease=False, make_latest="true", body=body))
     latest = json.loads(api(PUBLIC + "/releases/latest", token))
     if latest["tag_name"] != tag or not any(a["name"] == apk.name and a["digest"] == digest for a in latest["assets"]):
@@ -164,10 +195,14 @@ def public_check():
                 or "sha256:" + hashlib.file_digest(downloaded, "sha256").hexdigest() != digest):
             raise ValueError("Public download mismatch")
     if int(code) >= 26112304:
-        fallback = json.loads(anonymous(url + "/latest/download/update.json"))
-        if (fallback["tag_name"] != tag or fallback["body"] != public["body"] or
-                fallback["assets"] != [{key: asset[key] for key in ("name", "size", "digest", "browser_download_url")}]):
-            raise ValueError("Fallback metadata mismatch")
+        expected = [{key: asset[key] for key in ("name", "size", "digest", "browser_download_url")}]
+        for attempt in range(6):
+            fallback = json.loads(anonymous(url + "/latest/download/update.json"))
+            if fallback["tag_name"] == tag and fallback["body"] == public["body"] and fallback["assets"] == expected:
+                break
+            if attempt == 5:
+                raise ValueError("Fallback metadata mismatch")
+            time.sleep(5)
     print(f"Anonymous update check and APK download passed for {tag}")
 
 
