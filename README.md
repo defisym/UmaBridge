@@ -13,7 +13,7 @@ UmaBridge 在 Android 手机上把上游 Clash 订阅的入口与 Nasu 出口组
 适用于 Android 9 及以上的 arm64 设备。准备一条 HTTPS Clash YAML 订阅，以及能使用生成配置的 Clash Meta for Android。
 
 1. 打开助手，点「导入」，填入上游订阅地址。
-2. 列表首行的「直连」只使用一层 OpenVPN，默认关闭。可以单独勾选，也可以与上游入口同时勾选。直连线路沿用相同的后缀规则，例如 `直连+Uma_203`。在「勾选追加跳转入口」中选中要使用的入口，点「应用节点选择」。等首页显示可用节点，就能看到各条线路的平均延迟。
+2. 在「设置 → 测速设置」可启用「允许直连」以同时测试单层 Uma OpenVPN，或启用「仅使用上游节点」以同时测试单独的上游入口。两项可独立启用。在「勾选追加跳转入口」中选中要使用的入口，点「应用节点选择」。等首页显示可用节点，就能看到各条线路的平均延迟。
 3. 点「复制本机链接」，在同一部手机的 Clash 中导入该 URL 并启用配置。游戏节点在「赛马娘」分组，「默认」「直连」固定在顶部，实际线路按延迟排序。首次有测速结果时默认选中排名第一的实际线路。
 
 本机链接指向手机的回环地址。Clash 更新订阅时需要助手的本机服务正在运行。
@@ -45,6 +45,8 @@ UmaBridge 在 Android 手机上把上游 Clash 订阅的入口与 Nasu 出口组
 在「设置 → 检查更新」查看当前显示版本与内部版本。检查公开正式版时先比较显示版本，再比较内部版本号（如 `26112301` 代表 2026 年 11 月 23 日第 01 包）。发现新版后显示待更新版本和该次发布的更新日志。点「下载更新」交给 Android 系统下载管理器，可在完成前取消。校验 APK 后，点「安装更新」并在系统窗口确认。「打开发布页面」可浏览全部版本。此功能按需检查。
 
 
+分享链接转换器沿用同版本 Mihomo 的解析规则，集成源码和构建说明随 APK 提供。
+
 ## English
 
 UmaBridge is an Android companion for Clash Meta for Android. It pairs entries in your upstream Clash subscription with Nasu exits, tests each complete route and adds working routes to the 赛马娘 group. Clash forwards the game traffic.
@@ -53,7 +55,7 @@ UmaBridge is an Android companion for Clash Meta for Android. It pairs entries i
 
 1. Download the arm64 APK from [Releases](https://github.com/defisym/UmaBridge/releases) and follow the Android installer prompts. UmaBridge supports Android 9 and later.
 2. Tap **Import** and enter your upstream HTTPS Clash YAML subscription URL.
-3. The first entry, **Direct (OpenVPN only)**, uses a single OpenVPN hop. It is off by default and can be selected on its own or alongside upstream entries. Its routes use the same suffix as other routes, e.g. `直连+Uma_203`. Select the upstream entries you want to test, then tap **Apply node selection**. The home screen lists working game routes in order of average latency.
+3. Under **Settings → Test settings**, enable **Allow direct connections** to also test standalone Uma OpenVPN routes, or **Use upstream nodes only** to also test each selected upstream on its own. Both switches are off on a fresh install. Select the upstream entries you want to test, then tap **Apply node selection**. The home screen lists working game routes in order of average latency.
 4. Tap **Copy local URL**, import that URL into Clash on the same phone and activate the profile. Keep the local UmaBridge service running when Clash refreshes the subscription. The game group places the default and direct options above the tested routes.
 
 ### Subscription options
@@ -82,3 +84,5 @@ Open **Settings → Check for updates**. UmaBridge compares numeric display vers
 ### Licenses
 
 UmaBridge uses the [MIT license](LICENSE). The bundled Mihomo executable is the unmodified [v1.19.34 upstream release](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.34). Its [GPL-3.0 license](licenses/mihomo-LICENSE.txt) and [corresponding source information](licenses/probe-source.txt) are included.
+
+The share-link converter uses the same Mihomo parser. Its integration source and build instructions are included in the APK.
