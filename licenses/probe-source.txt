@@ -1,0 +1,4 @@
+Mihomo v1.19.34, MetaCubeX and contributors. License: GPL-3.0.
+Upstream release: https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.34
+Corresponding upstream source: https://github.com/MetaCubeX/mihomo/archive/0455d0d28c4526937380505153e65a843d8612e8.tar.gz
+Binaries are the unmodified official Android executables.
