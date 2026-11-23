@@ -1,0 +1,29 @@
+name: Publish signed APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/release-request]
+
+permissions:
+  contents: write
+concurrency:
+  group: publish-signed-apk
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Retrieve and verify the signed build
+        env:
+          ARTIFACT_TOKEN: ${{ secrets.UMABRIDGE_DEV_ARTIFACTS_READ }}
+        run: python3 .github/scripts/promote.py retrieve
+      - name: Publish verified APK and release notes
+        env:
+          RELEASE_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/promote.py publish
