@@ -81,6 +81,25 @@ def retrieve():
     print(f"Verified {name} sha256:{digest}")
 
 
+def merge_notes(notes, previous, code):
+    entries = {"中文": {}, "English": {}}
+    for key in sorted(notes, key=int, reverse=True):
+        if not previous < int(key) <= code:
+            continue
+        parts = re.split(r"(?m)^### (中文|English)[ \t]*$", notes[key].strip())
+        if len(parts) != 5 or parts[0].strip() or set(parts[1::2]) != entries.keys():
+            raise ValueError(f"Expected Chinese and English release notes for build {key}")
+        for language, section in zip(parts[1::2], parts[2::2]):
+            for block in re.split(r"(?m)(?=^- )", section.strip()):
+                block = block.strip()
+                if block:
+                    # Older generated notes may be a single paragraph.
+                    item = block if block.startswith("- ") else "- " + block
+                    entries[language][item] = None
+    return "\n\n".join(f"### {language}\n\n" + "\n".join(items)
+                       for language, items in entries.items() if items)
+
+
 def publish():
     token = os.environ["RELEASE_TOKEN"]
     apk, = TMP.glob("*.apk")
@@ -118,8 +137,7 @@ def publish():
         notes = json.loads((TMP / "notes.json").read_text())
         if code not in notes:
             raise ValueError("Missing release notes for the selected build")
-        body = "\n\n".join(notes[key].strip() for key in sorted(notes, key=int, reverse=True)
-                          if previous < int(key) <= int(code))
+        body = merge_notes(notes, previous, int(code))
     if not body.strip():
         raise ValueError("Release notes are empty")
     if int(code) >= 26112304:
