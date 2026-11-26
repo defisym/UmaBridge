@@ -1,4 +1,4 @@
-"""Promote the latest successful private main build to a public Release."""
+"""Promote a verified private main build to a public Release."""
 import hashlib
 import json
 import os
@@ -48,18 +48,29 @@ def retrieve():
     if not token:
         raise ValueError("Configure UMABRIDGE_DEV_ARTIFACTS_READ on the public repository")
     TMP.mkdir()
-    runs = json.loads(api(PRIVATE + "/actions/workflows/release-apk.yml/runs?branch=main&status=success&per_page=1", token))
-    run = runs["workflow_runs"][0]
-    if run["head_repository"]["full_name"] != "defisym/UmaBridgeDev" or run["event"] not in ("push", "workflow_dispatch"):
-        raise ValueError("Unexpected build origin")
+    request = Path(".github/release-request").read_text().split() if os.environ["GITHUB_EVENT_NAME"] == "push" else []
+    if request and request[-1].startswith("run="):
+        run_id = request.pop()[4:]
+        if not re.fullmatch(r"[1-9][0-9]*", run_id) or not request or not re.fullmatch(TAG, request[0]):
+            raise ValueError("A pinned build requires a valid release tag and run ID")
+        run = json.loads(api(f"{PRIVATE}/actions/runs/{run_id}", token))
+        if str(run["id"]) != run_id:
+            raise ValueError("Unexpected build run ID")
+    else:
+        runs = json.loads(api(PRIVATE + "/actions/workflows/release-apk.yml/runs?branch=main&status=success&per_page=1", token))
+        run = runs["workflow_runs"][0]
+    if (run["head_repository"]["full_name"] != "defisym/UmaBridgeDev"
+            or run["path"] != ".github/workflows/release-apk.yml" or run["head_branch"] != "main"
+            or run["status"] != "completed" or run["conclusion"] != "success"
+            or run["event"] not in ("push", "workflow_dispatch")):
+        raise ValueError("Unexpected build origin or status")
     artifacts = json.loads(api(f"{PRIVATE}/actions/runs/{run['id']}/artifacts", token))["artifacts"]
     artifact, = [a for a in artifacts if re.fullmatch(APK, a["name"])]
     name = artifact["name"]
     version, code = re.fullmatch(APK, name).groups()
     tag = f"v{version}-{code}"
-    request = Path(".github/release-request").read_text().split() if os.environ["GITHUB_EVENT_NAME"] == "push" else []
     if request and request[0] != tag:
-        raise ValueError("Latest signed build does not match the requested tag")
+        raise ValueError("Selected signed build does not match the requested tag")
     read_archive(artifact, token, name)
     apk = TMP / name
     sdk = Path(os.environ["ANDROID_HOME"]) / "build-tools/35.0.0"
